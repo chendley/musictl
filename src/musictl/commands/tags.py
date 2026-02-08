@@ -9,6 +9,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from musictl.core.audio import read_audio
 from musictl.core.encoding import detect_non_utf8_tags, guess_encoding, try_decode, ENCODINGS
+from musictl.core.filename_parser import FilenamePattern
 from musictl.core.scanner import walk_audio_files
 from musictl.utils.console import console, make_tag_table
 
@@ -460,3 +461,135 @@ def normalize(
         console.print(f"[info]Dry run: {fixed_count} files would be normalized[/info]")
         if fixed_count > 0:
             console.print("[info]Run with --apply to save changes[/info]")
+
+
+@app.command("from-filename")
+def tags_from_filename(
+    path: Path = typer.Argument(..., help="Audio file or directory"),
+    pattern: str = typer.Option(..., "--pattern", "-p", help="Filename pattern"),
+    overwrite: bool = typer.Option(False, "--overwrite", help="Overwrite existing tags"),
+    apply: bool = typer.Option(False, "--apply", help="Apply changes"),
+    recursive: bool = typer.Option(True, "--recursive/--no-recursive", "-r/-R"),
+):
+    """Extract tags from filenames using a pattern.
+
+    Examples:
+        musictl tags from-filename ~/Music -p "{artist} - {title}"
+        musictl tags from-filename ~/Music -p "{track}. {title}" --apply
+    """
+    target = Path(path).expanduser().resolve()
+
+    if not target.exists():
+        console.print(f"[error]Path not found: {target}[/error]")
+        raise typer.Exit(1)
+
+    # Initialize pattern parser
+    try:
+        parser = FilenamePattern(pattern)
+    except ValueError as e:
+        console.print(f"[error]Invalid pattern: {e}[/error]")
+        raise typer.Exit(1)
+
+    # Find audio files
+    files = list(walk_audio_files(target, recursive=recursive))
+    if not files:
+        console.print("[warning]No audio files found[/warning]")
+        raise typer.Exit(0)
+
+    console.print(f"\n[info]Using pattern: {pattern}[/info]")
+    console.print(f"[info]Found {len(files)} files[/info]")
+    console.print()
+
+    matched_count = 0
+    updated_count = 0
+    skipped_count = 0
+
+    try:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            task = progress.add_task(f"Processing files...", total=len(files))
+
+            for audio_path in files:
+                progress.advance(task)
+
+                # Parse filename
+                extracted = parser.parse(audio_path.name)
+                if not extracted:
+                    skipped_count += 1
+                    continue
+
+                matched_count += 1
+
+                # Load audio file
+                try:
+                    mfile = mutagen.File(str(audio_path), easy=True)
+                    if mfile is None or not hasattr(mfile, 'tags'):
+                        continue
+                    if mfile.tags is None:
+                        mfile.add_tags()
+                except Exception:
+                    continue
+
+                # Check what tags would be updated
+                updates = []
+                for field, value in extracted.items():
+                    # Map field names to tag names
+                    tag_key = field
+                    if field == "track":
+                        tag_key = "tracknumber"
+                    elif field == "year":
+                        tag_key = "date"
+
+                    # Check if tag already exists
+                    existing = mfile.tags.get(tag_key)
+                    if existing and not overwrite:
+                        continue  # Skip if tag exists and not overwriting
+
+                    # Check if value is different
+                    existing_str = str(existing[0]) if existing else None
+                    if existing_str != value:
+                        updates.append((tag_key, existing_str, value))
+
+                if not updates:
+                    continue
+
+                updated_count += 1
+                rel_path = audio_path.relative_to(target) if target.is_dir() else audio_path.name
+
+                # Show what would be updated
+                progress.console.print(f"\n[info]File: {rel_path}[/info]")
+                for tag_key, old_val, new_val in updates:
+                    if old_val:
+                        progress.console.print(f"  [tag_key]{tag_key}[/tag_key]: [error]{old_val}[/error] → [success]{new_val}[/success]")
+                    else:
+                        progress.console.print(f"  [tag_key]{tag_key}[/tag_key]: [success]{new_val}[/success] (new)")
+
+                # Apply changes if requested
+                if apply:
+                    for tag_key, _, new_val in updates:
+                        mfile.tags[tag_key] = new_val
+                    mfile.save()
+                    progress.console.print(f"  [success]✓ Saved[/success]")
+
+    except KeyboardInterrupt:
+        console.print("\n[warning]Operation cancelled by user[/warning]")
+        raise typer.Exit(130)
+
+    # Summary
+    console.print()
+    console.print(f"[info]Scanned: {len(files)} files[/info]")
+    console.print(f"[info]Matched pattern: {matched_count} files[/info]")
+    if skipped_count > 0:
+        console.print(f"[warning]Skipped (no match): {skipped_count} files[/warning]")
+
+    if apply:
+        console.print(f"[success]Updated: {updated_count} files[/success]")
+    else:
+        console.print(f"[info]Dry run: {updated_count} files would be updated[/info]")
+        if updated_count > 0:
+            console.print("[info]Run with --apply to save changes[/info]")
+
+    console.print()
