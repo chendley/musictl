@@ -60,17 +60,12 @@ def detect_non_utf8_tags(path: Path, encoding: str = "cp1251") -> dict[str, byte
             if text_str.isascii():
                 continue
 
-            # Skip if text contains no extended characters
-            if not any(ord(c) > 127 for c in text_str):
-                continue
-
             # Try TWO reversal patterns:
             # Pattern 1: UTF-8 mojibake (encode as encoding, decode as UTF-8)
             # Pattern 2: Wrong encoding header (encode as Latin-1, decode as encoding)
 
             fixed = None
             intermediate_bytes = None
-            pattern_used = None
 
             # Pattern 1: UTF-8 double-encoding mojibake
             # Example: "РђРєРІР°СЂРёСѓРј" → encode cp1251 → decode utf-8 → "Аквариум"
@@ -80,7 +75,6 @@ def detect_non_utf8_tags(path: Path, encoding: str = "cp1251") -> dict[str, byte
                 if test_fixed != text_str:
                     fixed = test_fixed
                     intermediate_bytes = test_bytes
-                    pattern_used = 1
             except (UnicodeDecodeError, UnicodeEncodeError):
                 pass
 
@@ -93,40 +87,18 @@ def detect_non_utf8_tags(path: Path, encoding: str = "cp1251") -> dict[str, byte
                     if test_fixed != text_str:
                         fixed = test_fixed
                         intermediate_bytes = test_bytes
-                        pattern_used = 2
                 except (UnicodeDecodeError, UnicodeEncodeError):
                     pass
 
             # If we found a reversal, check if it's actually better
             if fixed is not None and intermediate_bytes is not None:
                 # Safety check: verify the "fixed" version is actually better
-                # Strategy: Count characters OUTSIDE the expected range
-                # Mojibake has MORE anomalous characters than correct text
-                # Fixed text should have FEWER anomalous characters
+                # Count characters outside expected range - fewer is better
+                anomalous_in_original = _count_anomalous_chars(text_str, encoding)
+                anomalous_in_fixed = _count_anomalous_chars(fixed, encoding)
 
-                if encoding.startswith("cp1251") or encoding.startswith("koi8"):
-                    # Basic Russian Cyrillic: U+0410 to U+044F (А-я)
-                    # Mojibake produces extended Cyrillic + non-Cyrillic chars
-                    # Count NON-basic Cyrillic - fewer is better
-                    anomalous_in_original = sum(1 for c in text_str if not (0x410 <= ord(c) <= 0x44F))
-                    anomalous_in_fixed = sum(1 for c in fixed if not (0x410 <= ord(c) <= 0x44F))
-                    is_better = anomalous_in_fixed < anomalous_in_original
-                elif encoding.startswith("shift_jis") or encoding.startswith("euc-jp"):
-                    # Japanese Unicode blocks: Hiragana, Katakana, CJK
-                    anomalous_in_original = sum(1 for c in text_str if not (0x3040 <= ord(c) <= 0x30FF or 0x4E00 <= ord(c) <= 0x9FFF))
-                    anomalous_in_fixed = sum(1 for c in fixed if not (0x3040 <= ord(c) <= 0x30FF or 0x4E00 <= ord(c) <= 0x9FFF))
-                    is_better = anomalous_in_fixed < anomalous_in_original
-                elif encoding.startswith("gb") or encoding.startswith("big5"):
-                    # Chinese CJK Unicode block
-                    anomalous_in_original = sum(1 for c in text_str if not (0x4E00 <= ord(c) <= 0x9FFF))
-                    anomalous_in_fixed = sum(1 for c in fixed if not (0x4E00 <= ord(c) <= 0x9FFF))
-                    is_better = anomalous_in_fixed < anomalous_in_original
-                else:
-                    # For other encodings, just check if it's different
-                    is_better = fixed != text_str
-
-                # Only flag if the fixed version has FEWER anomalous characters
-                if is_better and fixed != text_str:
+                # Only flag if fixed has fewer anomalous characters
+                if anomalous_in_fixed < anomalous_in_original:
                     suspect_tags[key] = intermediate_bytes
 
     return suspect_tags
@@ -151,3 +123,22 @@ def guess_encoding(raw_bytes: bytes) -> list[tuple[str, str, str]]:
         if decoded:
             results.append((enc, desc, decoded))
     return results
+
+
+def _count_anomalous_chars(text: str, encoding: str) -> int:
+    """Count characters outside the expected Unicode range for the given encoding.
+
+    Lower counts indicate better text quality (fewer anomalies).
+    """
+    if encoding.startswith("cp1251") or encoding.startswith("koi8"):
+        # Basic Russian Cyrillic: U+0410 to U+044F (А-я)
+        return sum(1 for c in text if not (0x410 <= ord(c) <= 0x44F))
+    elif encoding.startswith("shift_jis") or encoding.startswith("euc-jp"):
+        # Japanese Unicode blocks: Hiragana, Katakana, CJK
+        return sum(1 for c in text if not (0x3040 <= ord(c) <= 0x30FF or 0x4E00 <= ord(c) <= 0x9FFF))
+    elif encoding.startswith("gb") or encoding.startswith("big5"):
+        # Chinese CJK Unicode block
+        return sum(1 for c in text if not (0x4E00 <= ord(c) <= 0x9FFF))
+    else:
+        # For unknown encodings, return 0 if different from original, else 1
+        return 0

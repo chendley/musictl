@@ -1,27 +1,27 @@
 # musictl
 
-**A powerful CLI toolkit for managing, fixing, and organizing music libraries.**
+**CLI toolkit for managing, fixing, and organizing music libraries.**
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Tests: 146 passing](https://img.shields.io/badge/tests-146%20passing-brightgreen.svg)]()
 
-Stop fighting with messy music libraries. `musictl` helps you clean up tags, find duplicates, organize files, and validate your collection with a beautiful terminal interface.
+Command-line tool for cleaning up tags, finding duplicates, organizing files, and validating audio collections.
 
 ---
 
-## Safety First
+## Safety
 
-**musictl is designed with safety in mind:**
+**Default behavior:**
 
-- ✅ **Dry-run by default** - All destructive operations show a preview first
-- ✅ **Explicit `--apply` required** - No accidental deletions or modifications
-- ✅ **Smart safeguards** - ID3v1 stripping checks for ID3v2 tags first
-- ✅ **Local-only** - No network access, no telemetry, no data collection
-- ✅ **146 comprehensive tests** - Extensive test coverage for reliability
-- ✅ **Security reviewed** - See [SECURITY.md](SECURITY.md) for full analysis
+- ✅ **Dry-run by default** - Destructive operations preview changes
+- ✅ **Explicit `--apply` required** - No accidental modifications
+- ✅ **Safety checks** - ID3v1 stripping verifies ID3v2 exists first
+- ✅ **Local-only** - No network access, no telemetry
+- ✅ **146 tests** - Comprehensive test coverage
+- ✅ **Security reviewed** - See [SECURITY.md](SECURITY.md)
 
-**Always backup your music library before bulk operations!**
+**Backup your library before bulk operations.**
 
 ## Features
 
@@ -115,59 +115,41 @@ musictl --help
 musictl tags show /path/to/song.mp3
 ```
 
-## Getting Started Safely
+## Getting Started
 
-### First-Time Users: Start Here
+**Basic workflow:**
 
-**Before making any changes to your music library:**
-
-1. **Backup your library** (seriously!)
+1. **Backup your library**
    ```bash
-   # Example: Copy to external drive
    rsync -av ~/Music /mnt/backup/Music
    ```
 
-2. **Scan your library** (read-only, safe)
+2. **Scan your library**
    ```bash
    musictl scan library ~/Music
    ```
 
-3. **Test with dry-run** (shows what WOULD happen, makes NO changes)
+3. **Preview changes** (dry-run, default behavior)
    ```bash
-   # Example: See what files have ID3v1 tags
    musictl tags strip-v1 ~/Music
    ```
 
-4. **Test on a single file** (when you're ready)
-   ```bash
-   # Make a test copy first
-   cp ~/Music/test.mp3 /tmp/test.mp3
-
-   # Apply operation to test copy
-   musictl tags strip-v1 /tmp/test.mp3 --apply
-
-   # Verify it worked
-   musictl tags show /tmp/test.mp3
-   ```
-
-5. **Run on full library** (only after testing!)
+4. **Apply changes** (requires `--apply` flag)
    ```bash
    musictl tags strip-v1 ~/Music --apply
    ```
 
-### Understanding Dry-Run vs Apply
+### Dry-Run vs Apply
 
-**Dry-run** (default): Shows what WOULD happen, makes NO changes
+**Dry-run (default):** Shows what would happen, makes no changes
 ```bash
-musictl dupes find ~/Music              # Safe, just shows duplicates
+musictl dupes find ~/Music              # Preview only
 ```
 
-**Apply mode**: Actually makes changes (requires explicit `--apply` flag)
+**Apply mode:** Makes changes (requires `--apply`)
 ```bash
-musictl dupes find ~/Music --apply      # Dangerous, deletes files!
+musictl dupes find ~/Music --apply      # Deletes files
 ```
-
-**Always review dry-run output before using `--apply`!**
 
 ---
 
@@ -589,19 +571,18 @@ musictl tags strip-v1 ~/Music --apply --migrate
 
 ### Is musictl safe to use?
 
-**Yes**, when used as intended:
-- ✅ Dry-run by default prevents accidental changes
-- ✅ 146 comprehensive tests ensure reliability
+Safe when used properly:
+- ✅ Dry-run by default
+- ✅ 146 tests
 - ✅ Security reviewed (see [SECURITY.md](SECURITY.md))
-- ⚠️ Always backup before bulk operations
+- ⚠️ Backup before bulk operations
 
 ### Will it corrupt my files?
 
-**Extremely unlikely**:
-- Uses well-tested mutagen library (17+ years old, millions of users)
+Unlikely:
+- Uses mutagen library (stable, widely used)
 - Operations are atomic where possible
-- Tag writes are handled safely by mutagen
-- ⚠️ Don't run multiple operations on same files concurrently
+- ⚠️ Don't run concurrent operations on same files
 
 ### Can I undo changes?
 
@@ -723,4 +704,4 @@ Built with:
 
 ---
 
-**Made for music lovers who care about organized libraries**
+**Music library management tool**

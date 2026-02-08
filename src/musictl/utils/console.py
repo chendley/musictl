@@ -37,3 +37,14 @@ def make_file_table(title: str = "Files") -> Table:
     table.add_column("Bit Depth", justify="right")
     table.add_column("Duration", justify="right")
     return table
+
+
+def format_size(size_bytes: int) -> str:
+    """Format byte size as human-readable string (KB, MB, GB)."""
+    if size_bytes >= 1024**3:
+        return f"{size_bytes / 1024**3:.2f} GB"
+    elif size_bytes >= 1024**2:
+        return f"{size_bytes / 1024**2:.2f} MB"
+    elif size_bytes >= 1024:
+        return f"{size_bytes / 1024:.2f} KB"
+    return f"{size_bytes} bytes"

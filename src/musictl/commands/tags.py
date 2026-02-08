@@ -12,6 +12,11 @@ from musictl.core.encoding import detect_non_utf8_tags, guess_encoding, try_deco
 from musictl.core.scanner import walk_audio_files
 from musictl.utils.console import console, make_tag_table
 
+
+def _parse_id3v1_field(data: bytes, start: int, end: int) -> str:
+    """Parse an ID3v1 text field from raw bytes."""
+    return data[start:end].rstrip(b"\x00").decode("latin1", errors="ignore")
+
 app = typer.Typer(help="Audio tag operations")
 
 
@@ -130,7 +135,6 @@ def fix_encoding(
             #            → decode as source_encoding to get original
 
             # Try both decodings and pick the one that works
-            decoded = None
             try:
                 # Pattern 1: UTF-8 mojibake
                 decoded = intermediate_bytes.decode("utf-8")
@@ -140,9 +144,6 @@ def fix_encoding(
                     decoded = intermediate_bytes.decode(source_encoding)
                 except UnicodeDecodeError:
                     continue
-
-            if decoded is None:
-                continue
 
             current = str(id3.get(key, ""))
             # Sanity check: only apply if result is different
@@ -212,13 +213,16 @@ def strip_v1(
             for audio_path in files:
                 progress.advance(task)
 
-                # Check for ID3v1 tag
+                # Check for both ID3v1 and ID3v2 in one file open
                 has_v1 = False
+                has_v2 = False
                 try:
                     with open(audio_path, "rb") as f:
+                        # Check for ID3v2 at start of file
+                        has_v2 = f.read(3) == b"ID3"
+                        # Check for ID3v1 at end of file
                         f.seek(-128, 2)
-                        if f.read(3) == b"TAG":
-                            has_v1 = True
+                        has_v1 = f.read(3) == b"TAG"
                 except Exception:
                     continue
 
@@ -226,15 +230,6 @@ def strip_v1(
                     continue
 
                 rel_path = audio_path.relative_to(target) if target.is_dir() else audio_path.name
-
-                # Check for ID3v2 header (not auto-converted from ID3v1)
-                # ID3v2 headers start with "ID3" at the beginning of the file
-                has_v2 = False
-                try:
-                    with open(audio_path, "rb") as f:
-                        has_v2 = f.read(3) == b"ID3"
-                except Exception:
-                    has_v2 = False
 
                 # Safety check: only strip if ID3v2 exists, unless --migrate or --force
                 if not has_v2 and not migrate and not force:
@@ -255,11 +250,11 @@ def strip_v1(
 
                         # Parse ID3v1 fields
                         if v1_data[0:3] == b"TAG":
-                            title = v1_data[3:33].rstrip(b"\x00").decode("latin1", errors="ignore")
-                            artist = v1_data[33:63].rstrip(b"\x00").decode("latin1", errors="ignore")
-                            album = v1_data[63:93].rstrip(b"\x00").decode("latin1", errors="ignore")
-                            year = v1_data[93:97].rstrip(b"\x00").decode("latin1", errors="ignore")
-                            comment = v1_data[97:127].rstrip(b"\x00").decode("latin1", errors="ignore")
+                            title = _parse_id3v1_field(v1_data, 3, 33)
+                            artist = _parse_id3v1_field(v1_data, 33, 63)
+                            album = _parse_id3v1_field(v1_data, 63, 93)
+                            year = _parse_id3v1_field(v1_data, 93, 97)
+                            comment = _parse_id3v1_field(v1_data, 97, 127)
 
                             # Create ID3v2 tags
                             try:

@@ -5,7 +5,7 @@ from pathlib import Path
 import typer
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCompleteColumn
 
-from musictl.utils.console import console
+from musictl.utils.console import console, format_size
 
 app = typer.Typer(help="Cleanup operations")
 
@@ -40,7 +40,23 @@ def clean_temp_files(
 
     console.print(f"\n[info]Scanning for temporary files...[/info]")
 
-    # Find all matching files
+    # Helper to check if filename matches any pattern
+    def matches_pattern(filename: str) -> bool:
+        for pattern in TEMP_FILE_PATTERNS:
+            if pattern.startswith("*"):
+                # Extension pattern like *.tmp
+                if filename.endswith(pattern[1:]):
+                    return True
+            elif pattern.endswith("*"):
+                # Prefix wildcard pattern like ._*
+                if filename.startswith(pattern[:-1]):
+                    return True
+            elif filename == pattern:
+                # Exact match like .DS_Store
+                return True
+        return False
+
+    # Find all matching files in one pass
     temp_files = []
 
     try:
@@ -51,21 +67,20 @@ def clean_temp_files(
         ) as progress:
             task = progress.add_task("Scanning...", total=None)
 
-            for pattern in TEMP_FILE_PATTERNS:
-                if recursive:
-                    matches = list(target.rglob(pattern))
-                else:
-                    matches = list(target.glob(pattern))
+            if recursive:
+                for path in target.rglob("*"):
+                    if path.is_file() and matches_pattern(path.name):
+                        temp_files.append(path)
+            else:
+                for path in target.glob("*"):
+                    if path.is_file() and matches_pattern(path.name):
+                        temp_files.append(path)
 
-                temp_files.extend(matches)
-                progress.update(task, advance=1)
+            progress.update(task, advance=1)
 
     except KeyboardInterrupt:
         console.print("\n[warning]Operation cancelled by user[/warning]")
         raise typer.Exit(130)
-
-    # Filter to only files (not directories)
-    temp_files = [f for f in temp_files if f.is_file()]
 
     if not temp_files:
         console.print("\n[success]No temporary files found![/success]")
@@ -73,15 +88,7 @@ def clean_temp_files(
 
     # Calculate total size
     total_size = sum(f.stat().st_size for f in temp_files)
-
-    if total_size >= 1024**3:
-        size_str = f"{total_size / 1024**3:.2f} GB"
-    elif total_size >= 1024**2:
-        size_str = f"{total_size / 1024**2:.2f} MB"
-    elif total_size >= 1024:
-        size_str = f"{total_size / 1024:.2f} KB"
-    else:
-        size_str = f"{total_size} bytes"
+    size_str = format_size(total_size)
 
     # Display findings
     console.print()
@@ -118,13 +125,7 @@ def clean_temp_files(
     # Show summary by pattern
     for pattern, files in sorted(by_pattern.items()):
         pattern_size = sum(f.stat().st_size for f in files)
-        if pattern_size >= 1024**2:
-            pattern_size_str = f"{pattern_size / 1024**2:.2f} MB"
-        elif pattern_size >= 1024:
-            pattern_size_str = f"{pattern_size / 1024:.2f} KB"
-        else:
-            pattern_size_str = f"{pattern_size} bytes"
-
+        pattern_size_str = format_size(pattern_size)
         console.print(f"  [cyan]{pattern}[/cyan]: {len(files)} files ({pattern_size_str})")
 
     console.print()
