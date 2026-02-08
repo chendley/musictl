@@ -330,7 +330,7 @@ def normalize(
     """Normalize common tag inconsistencies.
 
     Fixes: leading/trailing whitespace, multiple spaces, inconsistent
-    'Various Artists' spellings, empty tags.
+    'Various Artists' spellings, genre variants, empty tags.
     """
     target = Path(path).expanduser().resolve()
     files = list(walk_audio_files(target, recursive=recursive))
@@ -341,6 +341,59 @@ def normalize(
     various_artists_variants = {
         "v/a", "v.a.", "va", "various", "various artist",
         "various artists", "variousartists", "v / a", "v/ a",
+    }
+
+    # Genre normalization mapping (lowercase variant -> canonical form)
+    genre_mappings = {
+        # Electronic variants
+        "electronic": "Electronic",
+        "electro": "Electronic",
+        # Hip-Hop variants
+        "hip-hop": "Hip-Hop",
+        "hip hop": "Hip-Hop",
+        "hiphop": "Hip-Hop",
+        "rap": "Hip-Hop",
+        # Rock variants
+        "rock": "Rock",
+        "rock & roll": "Rock & Roll",
+        "rock and roll": "Rock & Roll",
+        "rock'n'roll": "Rock & Roll",
+        # Pop variants
+        "pop": "Pop",
+        # Jazz variants
+        "jazz": "Jazz",
+        # Classical variants
+        "classical": "Classical",
+        "classic": "Classical",
+        # Metal variants
+        "metal": "Metal",
+        "heavy metal": "Heavy Metal",
+        # Alternative variants
+        "alternative": "Alternative",
+        "alt": "Alternative",
+        "indie": "Indie",
+        # R&B variants
+        "r&b": "R&B",
+        "r & b": "R&B",
+        "rnb": "R&B",
+        "rhythm and blues": "R&B",
+        # Country variants
+        "country": "Country",
+        # Blues variants
+        "blues": "Blues",
+        # Punk variants
+        "punk": "Punk",
+        "punk rock": "Punk Rock",
+        # Reggae variants
+        "reggae": "Reggae",
+        # Soul variants
+        "soul": "Soul",
+        # Folk variants
+        "folk": "Folk",
+        # Experimental variants
+        "experimental": "Experimental",
+        # Ambient variants
+        "ambient": "Ambient",
     }
 
     fixed_count = 0
@@ -367,6 +420,14 @@ def normalize(
                 if key.lower() in ("artist", "albumartist", "album_artist"):
                     if val.lower().strip() in various_artists_variants:
                         val = "Various Artists"
+                # Normalize genre
+                if key.lower() == "genre":
+                    val_lower = val.lower().strip()
+                    if val_lower in genre_mappings:
+                        val = genre_mappings[val_lower]
+                    else:
+                        # Default: titlecase for unmapped genres
+                        val = val.title()
                 # Track changes
                 if val != original:
                     changes.append((key, original, val))

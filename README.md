@@ -4,7 +4,7 @@
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Tests: 167 passing](https://img.shields.io/badge/tests-167%20passing-brightgreen.svg)]()
+[![Tests: 180 passing](https://img.shields.io/badge/tests-180%20passing-brightgreen.svg)]()
 
 Command-line tool for cleaning up tags, finding duplicates, organizing files, and validating audio collections.
 
@@ -18,7 +18,7 @@ Command-line tool for cleaning up tags, finding duplicates, organizing files, an
 - ✅ **Explicit `--apply` required** - No accidental modifications
 - ✅ **Safety checks** - ID3v1 stripping verifies ID3v2 exists first
 - ✅ **Local-only** - No network access, no telemetry
-- ✅ **167 tests** - Comprehensive test coverage
+- ✅ **180 tests** - Comprehensive test coverage
 - ✅ **Security reviewed** - See [SECURITY.md](SECURITY.md)
 
 **Backup your library before bulk operations.**
@@ -28,7 +28,7 @@ Command-line tool for cleaning up tags, finding duplicates, organizing files, an
 ### Tag Management
 - **Fix encoding issues** - Convert CP1251/KOI-8/other legacy encodings to UTF-8
 - **Remove ID3v1 tags** - Strip obsolete tags from MP3 files
-- **Normalize tags** - Clean up whitespace, standardize "Various Artists"
+- **Normalize tags** - Clean up whitespace, standardize "Various Artists" and genre variants
 - **Display metadata** - View all tags and audio properties
 
 ### Library Scanning
@@ -174,6 +174,21 @@ musictl tags fix-encoding ~/Music --from cp1251
 # Apply the fixes
 musictl tags fix-encoding ~/Music --from cp1251 --apply
 ```
+
+### Normalize Tags
+```bash
+# Preview tag normalization (dry-run by default)
+musictl tags normalize ~/Music
+
+# Apply normalization
+musictl tags normalize ~/Music --apply
+```
+
+Normalization fixes:
+- Whitespace (leading/trailing, multiple spaces)
+- "Various Artists" variants (v/a, V.A., va, etc.)
+- Genre variants ("rock" → "Rock", "hip hop" → "Hip-Hop", "rnb" → "R&B")
+- Empty tags
 
 ### Scan Your Library
 ```bash
