@@ -60,9 +60,8 @@ class TestScanEncoding:
         """Test scanning nonexistent path."""
         result = runner.invoke(app, ["scan", "encoding", "/nonexistent/path"])
 
-        # Should handle gracefully - might exit with 0 and show no files
-        # or might exit with error
-        assert result.exit_code in (0, 1)
+        assert result.exit_code == 1
+        assert "not found" in result.stdout.lower()
 
 
 class TestScanHires:

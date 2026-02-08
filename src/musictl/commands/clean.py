@@ -40,24 +40,21 @@ def clean_temp_files(
 
     console.print(f"\n[info]Scanning for temporary files...[/info]")
 
-    # Helper to check if filename matches any pattern
-    def matches_pattern(filename: str) -> bool:
+    # Find all matching files in one pass, grouped by pattern
+    by_pattern: dict[str, list[Path]] = {}
+
+    def _match_pattern(filename: str) -> str | None:
+        """Return the matching pattern name, or None."""
         for pattern in TEMP_FILE_PATTERNS:
             if pattern.startswith("*"):
-                # Extension pattern like *.tmp
                 if filename.endswith(pattern[1:]):
-                    return True
+                    return pattern
             elif pattern.endswith("*"):
-                # Prefix wildcard pattern like ._*
                 if filename.startswith(pattern[:-1]):
-                    return True
+                    return pattern
             elif filename == pattern:
-                # Exact match like .DS_Store
-                return True
-        return False
-
-    # Find all matching files in one pass
-    temp_files = []
+                return pattern
+        return None
 
     try:
         with Progress(
@@ -67,20 +64,20 @@ def clean_temp_files(
         ) as progress:
             task = progress.add_task("Scanning...", total=None)
 
-            if recursive:
-                for path in target.rglob("*"):
-                    if path.is_file() and matches_pattern(path.name):
-                        temp_files.append(path)
-            else:
-                for path in target.glob("*"):
-                    if path.is_file() and matches_pattern(path.name):
-                        temp_files.append(path)
+            entries = target.rglob("*") if recursive else target.glob("*")
+            for entry in entries:
+                if entry.is_file():
+                    matched = _match_pattern(entry.name)
+                    if matched:
+                        by_pattern.setdefault(matched, []).append(entry)
 
             progress.update(task, advance=1)
 
     except KeyboardInterrupt:
         console.print("\n[warning]Operation cancelled by user[/warning]")
         raise typer.Exit(130)
+
+    temp_files = [f for group in by_pattern.values() for f in group]
 
     if not temp_files:
         console.print("\n[success]No temporary files found![/success]")
@@ -94,33 +91,6 @@ def clean_temp_files(
     console.print()
     console.print(f"[bold]Found {len(temp_files)} temporary files:[/bold]")
     console.print()
-
-    # Group by pattern
-    by_pattern = {}
-    for f in temp_files:
-        # Determine which pattern matched
-        matched_pattern = None
-        for pattern in TEMP_FILE_PATTERNS:
-            # Simple pattern matching
-            if pattern.startswith("*"):
-                # Extension pattern like *.tmp
-                if f.name.endswith(pattern[1:]):
-                    matched_pattern = pattern
-                    break
-            elif pattern.endswith("*"):
-                # Prefix wildcard pattern like ._*
-                if f.name.startswith(pattern[:-1]):
-                    matched_pattern = pattern
-                    break
-            elif f.name == pattern:
-                # Exact match like .DS_Store or Thumbs.db
-                matched_pattern = pattern
-                break
-
-        if matched_pattern:
-            if matched_pattern not in by_pattern:
-                by_pattern[matched_pattern] = []
-            by_pattern[matched_pattern].append(f)
 
     # Show summary by pattern
     for pattern, files in sorted(by_pattern.items()):

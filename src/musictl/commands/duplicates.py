@@ -10,7 +10,7 @@ from rich.table import Table
 from musictl.core.audio import read_audio
 from musictl.core.hasher import file_hash, quick_hash
 from musictl.core.scanner import walk_audio_files
-from musictl.utils.console import console
+from musictl.utils.console import console, format_size
 
 app = typer.Typer(help="Duplicate detection operations")
 
@@ -46,7 +46,6 @@ def _find_exact_duplicates(path: Path, apply: bool, recursive: bool):
     console.print(f"\n[info]Scanning {len(files)} files for duplicates...[/info]")
 
     # Phase 1: Quick hash to reduce comparison set
-    quick_hashes = {}
     quick_groups = defaultdict(list)
 
     try:
@@ -63,7 +62,6 @@ def _find_exact_duplicates(path: Path, apply: bool, recursive: bool):
                 progress.advance(task)
                 try:
                     qhash = quick_hash(audio_path)
-                    quick_hashes[audio_path] = qhash
                     quick_groups[qhash].append(audio_path)
                 except Exception as e:
                     console.print(f"[error]Error hashing {audio_path.name}: {e}[/error]")
@@ -130,22 +128,7 @@ def _find_exact_duplicates(path: Path, apply: bool, recursive: bool):
         wasted = file_size * (len(file_group) - 1)
         total_wasted_space += wasted
 
-        # Format sizes
-        if file_size >= 1024**3:
-            size_str = f"{file_size / 1024**3:.2f} GB"
-        elif file_size >= 1024**2:
-            size_str = f"{file_size / 1024**2:.2f} MB"
-        else:
-            size_str = f"{file_size / 1024:.2f} KB"
-
-        if wasted >= 1024**3:
-            wasted_str = f"{wasted / 1024**3:.2f} GB"
-        elif wasted >= 1024**2:
-            wasted_str = f"{wasted / 1024**2:.2f} MB"
-        else:
-            wasted_str = f"{wasted / 1024:.2f} KB"
-
-        table.add_row(str(i), str(len(file_group)), size_str, wasted_str)
+        table.add_row(str(i), str(len(file_group)), format_size(file_size), format_size(wasted))
 
         # Show file paths
         console.print(f"\n[bold cyan]Group {i}:[/bold cyan]")
@@ -158,16 +141,9 @@ def _find_exact_duplicates(path: Path, apply: bool, recursive: bool):
     console.print(table)
 
     # Summary
-    if total_wasted_space >= 1024**3:
-        total_wasted_str = f"{total_wasted_space / 1024**3:.2f} GB"
-    elif total_wasted_space >= 1024**2:
-        total_wasted_str = f"{total_wasted_space / 1024**2:.2f} MB"
-    else:
-        total_wasted_str = f"{total_wasted_space / 1024:.2f} KB"
-
     console.print(f"\n[bold]Summary:[/bold]")
     console.print(f"  Duplicate files: [bold]{total_duplicates}[/bold]")
-    console.print(f"  Wasted space: [bold]{total_wasted_str}[/bold]")
+    console.print(f"  Wasted space: [bold]{format_size(total_wasted_space)}[/bold]")
     console.print()
 
     if not apply:

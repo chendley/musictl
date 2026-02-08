@@ -334,6 +334,11 @@ def normalize(
     'Various Artists' spellings, genre variants, empty tags.
     """
     target = Path(path).expanduser().resolve()
+
+    if not target.exists():
+        console.print(f"[error]Path not found: {target}[/error]")
+        raise typer.Exit(1)
+
     files = list(walk_audio_files(target, recursive=recursive))
     if not files:
         console.print("[warning]No audio files found[/warning]")
@@ -510,7 +515,7 @@ def tags_from_filename(
             TextColumn("[progress.description]{task.description}"),
             console=console,
         ) as progress:
-            task = progress.add_task(f"Processing files...", total=len(files))
+            task = progress.add_task("Processing files...", total=len(files))
 
             for audio_path in files:
                 progress.advance(task)

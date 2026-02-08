@@ -53,30 +53,6 @@ def mp3_with_genre_variants(temp_music_dir):
     return files
 
 
-@pytest.fixture
-def flac_with_genre_variants(temp_music_dir):
-    """Create FLAC files with genre variants."""
-    files = []
-
-    # Alternative variant
-    flac_1 = temp_music_dir / "alt.flac"
-    create_test_flac(flac_1)
-    audio = FLAC(str(flac_1))
-    audio["GENRE"] = "alt"
-    audio.save()
-    files.append(flac_1)
-
-    # Rock variant
-    flac_2 = temp_music_dir / "rock.flac"
-    create_test_flac(flac_2)
-    audio = FLAC(str(flac_2))
-    audio["GENRE"] = "ROCK"
-    audio.save()
-    files.append(flac_2)
-
-    return files
-
-
 class TestGenreNormalization:
     """Test genre normalization functionality."""
 
