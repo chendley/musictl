@@ -1,5 +1,7 @@
 """Library scanning and reporting commands."""
 
+import csv
+import json
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -10,7 +12,7 @@ from rich.table import Table
 from musictl.core.audio import read_audio
 from musictl.core.encoding import detect_non_utf8_tags, guess_encoding
 from musictl.core.scanner import walk_audio_files
-from musictl.utils.console import console
+from musictl.utils.console import console, format_size
 
 app = typer.Typer(help="Library scanning and reporting")
 
@@ -19,12 +21,18 @@ app = typer.Typer(help="Library scanning and reporting")
 def scan_library(
     path: Path = typer.Argument(..., help="Directory to scan"),
     recursive: bool = typer.Option(True, "--recursive/--no-recursive", "-r/-R"),
+    export: Path = typer.Option(None, "--export", "-e", help="Export results to file"),
+    export_format: str = typer.Option("csv", "--format", "-f", help="Export format: csv or json"),
 ):
     """Full library scan with comprehensive statistics."""
     target = Path(path).expanduser().resolve()
 
     if not target.exists():
         console.print(f"[error]Path not found: {target}[/error]")
+        raise typer.Exit(1)
+
+    if export and export_format not in ("csv", "json"):
+        console.print(f"[error]Invalid format: {export_format}. Use 'csv' or 'json'[/error]")
         raise typer.Exit(1)
 
     files = list(walk_audio_files(target, recursive=recursive))
@@ -182,6 +190,89 @@ def scan_library(
     if errors_count > 0:
         console.print(f"  [error]Files with errors: {errors_count}[/error]")
 
+    # Export if requested
+    if export:
+        export_path = Path(export).expanduser().resolve()
+        try:
+            if export_format == "json":
+                # Build JSON structure
+                data = {
+                    "scan_path": str(target),
+                    "total_files": len(files),
+                    "total_duration_seconds": total_duration,
+                    "total_size_bytes": total_size,
+                    "errors": errors_count,
+                    "id3v1_count": id3v1_count,
+                    "formats": [
+                        {
+                            "format": fmt,
+                            "count": format_counts[fmt],
+                            "duration_seconds": format_durations[fmt],
+                            "size_bytes": format_sizes[fmt],
+                            "percentage": (format_counts[fmt] / len(files)) * 100
+                        }
+                        for fmt in sorted(format_counts.keys())
+                    ],
+                    "sample_rates": [
+                        {
+                            "sample_rate_hz": sr,
+                            "count": sample_rate_counts[sr],
+                            "percentage": (sample_rate_counts[sr] / len(files)) * 100
+                        }
+                        for sr in sorted([s for s in sample_rate_counts.keys() if s > 0], reverse=True)
+                    ],
+                    "bit_depths": [
+                        {
+                            "bit_depth": bd,
+                            "count": bit_depth_counts[bd],
+                            "percentage": (bit_depth_counts[bd] / len(files)) * 100
+                        }
+                        for bd in sorted([b for b in bit_depth_counts.keys() if b > 0], reverse=True)
+                    ]
+                }
+                with open(export_path, "w") as f:
+                    json.dump(data, f, indent=2)
+            else:  # CSV
+                with open(export_path, "w", newline="") as f:
+                    writer = csv.writer(f)
+                    # Summary section
+                    writer.writerow(["Library Statistics"])
+                    writer.writerow(["Scan Path", str(target)])
+                    writer.writerow(["Total Files", len(files)])
+                    writer.writerow(["Total Duration (seconds)", total_duration])
+                    writer.writerow(["Total Size (bytes)", total_size])
+                    writer.writerow(["Errors", errors_count])
+                    writer.writerow(["ID3v1 Count", id3v1_count])
+                    writer.writerow([])
+                    # Format distribution
+                    writer.writerow(["Format Distribution"])
+                    writer.writerow(["Format", "Count", "Duration (seconds)", "Size (bytes)", "Percentage"])
+                    for fmt in sorted(format_counts.keys()):
+                        writer.writerow([
+                            fmt,
+                            format_counts[fmt],
+                            format_durations[fmt],
+                            format_sizes[fmt],
+                            (format_counts[fmt] / len(files)) * 100
+                        ])
+                    writer.writerow([])
+                    # Sample rate distribution
+                    writer.writerow(["Sample Rate Distribution"])
+                    writer.writerow(["Sample Rate (Hz)", "Count", "Percentage"])
+                    for sr in sorted([s for s in sample_rate_counts.keys() if s > 0], reverse=True):
+                        writer.writerow([sr, sample_rate_counts[sr], (sample_rate_counts[sr] / len(files)) * 100])
+                    writer.writerow([])
+                    # Bit depth distribution
+                    if any(bd > 0 for bd in bit_depth_counts.keys()):
+                        writer.writerow(["Bit Depth Distribution"])
+                        writer.writerow(["Bit Depth", "Count", "Percentage"])
+                        for bd in sorted([b for b in bit_depth_counts.keys() if b > 0], reverse=True):
+                            writer.writerow([bd, bit_depth_counts[bd], (bit_depth_counts[bd] / len(files)) * 100])
+
+            console.print(f"\n[success]Exported to: {export_path}[/success]")
+        except Exception as e:
+            console.print(f"\n[error]Export failed: {e}[/error]")
+
     console.print()
 
 
@@ -189,6 +280,8 @@ def scan_library(
 def encoding(
     path: Path = typer.Argument(..., help="Directory to scan"),
     recursive: bool = typer.Option(True, "--recursive/--no-recursive", "-r/-R"),
+    export: Path = typer.Option(None, "--export", "-e", help="Export results to file"),
+    export_format: str = typer.Option("csv", "--format", "-f", help="Export format: csv or json"),
 ):
     """Scan for files with non-UTF-8 encoded tags."""
     target = Path(path).expanduser().resolve()
@@ -198,7 +291,12 @@ def encoding(
         console.print("[warning]No MP3 files found[/warning]")
         raise typer.Exit(0)
 
+    if export and export_format not in ("csv", "json"):
+        console.print(f"[error]Invalid format: {export_format}. Use 'csv' or 'json'[/error]")
+        raise typer.Exit(1)
+
     found_count = 0
+    suspect_files = []  # Store for export
 
     try:
         with Progress(
@@ -220,16 +318,53 @@ def encoding(
                 rel_path = audio_path.relative_to(target)
                 progress.console.print(f"\n[warning]Suspect encoding:[/warning] {rel_path}")
 
+                file_info = {"path": str(rel_path), "tags": {}}
                 for key, raw_bytes in suspect.items():
                     guesses = guess_encoding(raw_bytes)
                     progress.console.print(f"  [tag_key]{key}[/tag_key]:")
+                    tag_guesses = []
                     for enc, desc, decoded in guesses[:3]:
                         progress.console.print(f"    [{enc}] {decoded}")
+                        tag_guesses.append({"encoding": enc, "description": desc, "text": decoded})
+                    file_info["tags"][key] = tag_guesses
+                suspect_files.append(file_info)
     except KeyboardInterrupt:
         console.print("\n[warning]Operation cancelled by user[/warning]")
         raise typer.Exit(130)
 
     console.print(f"\n[info]Found {found_count} files with suspect encoding out of {len(files)} MP3s[/info]")
+
+    # Export if requested
+    if export and suspect_files:
+        export_path = Path(export).expanduser().resolve()
+        try:
+            if export_format == "json":
+                data = {
+                    "scan_path": str(target),
+                    "total_scanned": len(files),
+                    "suspect_count": found_count,
+                    "files": suspect_files
+                }
+                with open(export_path, "w") as f:
+                    json.dump(data, f, indent=2)
+            else:  # CSV
+                with open(export_path, "w", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["File Path", "Tag", "Possible Encoding", "Description", "Decoded Text"])
+                    for file_info in suspect_files:
+                        for tag, guesses in file_info["tags"].items():
+                            for guess in guesses:
+                                writer.writerow([
+                                    file_info["path"],
+                                    tag,
+                                    guess["encoding"],
+                                    guess["description"],
+                                    guess["text"]
+                                ])
+
+            console.print(f"[success]Exported to: {export_path}[/success]")
+        except Exception as e:
+            console.print(f"[error]Export failed: {e}[/error]")
 
 
 @app.command()
@@ -237,6 +372,8 @@ def hires(
     path: Path = typer.Argument(..., help="Directory to scan"),
     threshold: int = typer.Option(48000, "--threshold", "-t", help="Sample rate threshold in Hz"),
     recursive: bool = typer.Option(True, "--recursive/--no-recursive", "-r/-R"),
+    export: Path = typer.Option(None, "--export", "-e", help="Export results to file"),
+    export_format: str = typer.Option("csv", "--format", "-f", help="Export format: csv or json"),
 ):
     """Find hi-res audio files (sample rate above threshold)."""
     target = Path(path).expanduser().resolve()
@@ -245,6 +382,10 @@ def hires(
     if not files:
         console.print("[warning]No audio files found[/warning]")
         raise typer.Exit(0)
+
+    if export and export_format not in ("csv", "json"):
+        console.print(f"[error]Invalid format: {export_format}. Use 'csv' or 'json'[/error]")
+        raise typer.Exit(1)
 
     hires_files = []
 
@@ -285,3 +426,45 @@ def hires(
 
     console.print(table)
     console.print(f"\n[info]Found {len(hires_files)} hi-res files out of {len(files)} total[/info]")
+
+    # Export if requested
+    if export and hires_files:
+        export_path = Path(export).expanduser().resolve()
+        try:
+            if export_format == "json":
+                data = {
+                    "scan_path": str(target),
+                    "threshold_hz": threshold,
+                    "total_scanned": len(files),
+                    "hires_count": len(hires_files),
+                    "files": [
+                        {
+                            "path": str(info.path.relative_to(target)),
+                            "format": info.format,
+                            "sample_rate_hz": info.sample_rate,
+                            "bit_depth": info.bit_depth,
+                            "duration_seconds": info.duration,
+                            "channels": info.channels
+                        }
+                        for info in sorted(hires_files, key=lambda i: i.sample_rate, reverse=True)
+                    ]
+                }
+                with open(export_path, "w") as f:
+                    json.dump(data, f, indent=2)
+            else:  # CSV
+                with open(export_path, "w", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["File Path", "Format", "Sample Rate (Hz)", "Bit Depth", "Duration (seconds)", "Channels"])
+                    for info in sorted(hires_files, key=lambda i: i.sample_rate, reverse=True):
+                        writer.writerow([
+                            str(info.path.relative_to(target)),
+                            info.format,
+                            info.sample_rate,
+                            info.bit_depth if info.bit_depth else "",
+                            info.duration,
+                            info.channels
+                        ])
+
+            console.print(f"[success]Exported to: {export_path}[/success]")
+        except Exception as e:
+            console.print(f"[error]Export failed: {e}[/error]")

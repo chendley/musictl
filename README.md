@@ -4,7 +4,7 @@
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Tests: 146 passing](https://img.shields.io/badge/tests-146%20passing-brightgreen.svg)]()
+[![Tests: 155 passing](https://img.shields.io/badge/tests-155%20passing-brightgreen.svg)]()
 
 Command-line tool for cleaning up tags, finding duplicates, organizing files, and validating audio collections.
 
@@ -18,7 +18,7 @@ Command-line tool for cleaning up tags, finding duplicates, organizing files, an
 - ✅ **Explicit `--apply` required** - No accidental modifications
 - ✅ **Safety checks** - ID3v1 stripping verifies ID3v2 exists first
 - ✅ **Local-only** - No network access, no telemetry
-- ✅ **146 tests** - Comprehensive test coverage
+- ✅ **155 tests** - Comprehensive test coverage
 - ✅ **Security reviewed** - See [SECURITY.md](SECURITY.md)
 
 **Backup your library before bulk operations.**
@@ -33,6 +33,7 @@ Command-line tool for cleaning up tags, finding duplicates, organizing files, an
 
 ### Library Scanning
 - **Full library statistics** - Format distribution, sample rates, bit depths
+- **Export scan results** - CSV and JSON export for all scan commands
 - **Find hi-res files** - Detect files above specified sample rate
 - **Detect encoding issues** - Find non-UTF-8 encoded tags
 
@@ -178,11 +179,23 @@ musictl tags fix-encoding ~/Music --from cp1251 --apply
 # Full library scan with statistics
 musictl scan library ~/Music
 
+# Export scan results to CSV
+musictl scan library ~/Music --export library_stats.csv --format csv
+
+# Export scan results to JSON
+musictl scan library ~/Music --export library_stats.json --format json
+
 # Find hi-res files (>48kHz)
 musictl scan hires ~/Music
 
+# Export hi-res file list
+musictl scan hires ~/Music --export hires_files.csv
+
 # Find files with encoding issues
 musictl scan encoding ~/Music
+
+# Export encoding issues list
+musictl scan encoding ~/Music --export encoding_issues.json --format json
 ```
 
 ### Find Duplicates
