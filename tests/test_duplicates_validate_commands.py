@@ -1,4 +1,4 @@
-"""Integration tests for Phase 4 commands (duplicates, validation)."""
+"""Integration tests for duplicates and validation commands."""
 
 import shutil
 from pathlib import Path
@@ -237,8 +237,8 @@ class TestValidateCheck:
         assert "not found" in result.stdout.lower()
 
 
-class TestPhase4EdgeCases:
-    """Edge case tests for Phase 4 commands."""
+class TestDuplicatesValidateEdgeCases:
+    """Edge case tests for duplicates and validate commands."""
 
     def test_dupes_help(self):
         """Test 'musictl dupes --help'."""

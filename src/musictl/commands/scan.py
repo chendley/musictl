@@ -12,7 +12,7 @@ from rich.table import Table
 from musictl.core.audio import read_audio
 from musictl.core.encoding import detect_non_utf8_tags, guess_encoding
 from musictl.core.scanner import walk_audio_files
-from musictl.utils.console import console, format_size
+from musictl.utils.console import console, format_size, make_file_table
 
 app = typer.Typer(help="Library scanning and reporting")
 
@@ -118,19 +118,11 @@ def scan_library(
         minutes, seconds = divmod(remainder, 60)
         duration_str = f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m {seconds}s"
 
-        # Format size
-        if size >= 1024**3:
-            size_str = f"{size / 1024**3:.2f} GB"
-        elif size >= 1024**2:
-            size_str = f"{size / 1024**2:.2f} MB"
-        else:
-            size_str = f"{size / 1024:.2f} KB"
-
         format_table.add_row(
             fmt,
             str(count),
             duration_str,
-            size_str,
+            format_size(size),
             f"{percentage:.1f}%"
         )
 
@@ -172,17 +164,10 @@ def scan_library(
     minutes, seconds = divmod(remainder, 60)
     total_duration_str = f"{hours}h {minutes}m {seconds}s" if hours > 0 else f"{minutes}m {seconds}s"
 
-    if total_size >= 1024**3:
-        total_size_str = f"{total_size / 1024**3:.2f} GB"
-    elif total_size >= 1024**2:
-        total_size_str = f"{total_size / 1024**2:.2f} MB"
-    else:
-        total_size_str = f"{total_size / 1024:.2f} KB"
-
     console.print(f"[bold cyan]Summary:[/bold cyan]")
     console.print(f"  Total files: [bold]{len(files)}[/bold]")
     console.print(f"  Total duration: [bold]{total_duration_str}[/bold]")
-    console.print(f"  Total size: [bold]{total_size_str}[/bold]")
+    console.print(f"  Total size: [bold]{format_size(total_size)}[/bold]")
 
     if id3v1_count > 0:
         console.print(f"  [warning]Files with ID3v1 tags: {id3v1_count}[/warning]")
@@ -285,6 +270,11 @@ def encoding(
 ):
     """Scan for files with non-UTF-8 encoded tags."""
     target = Path(path).expanduser().resolve()
+
+    if not target.exists():
+        console.print(f"[error]Path not found: {target}[/error]")
+        raise typer.Exit(1)
+
     files = [f for f in walk_audio_files(target, recursive=recursive) if f.suffix.lower() == ".mp3"]
 
     if not files:
@@ -507,6 +497,11 @@ def hires(
 ):
     """Find hi-res audio files (sample rate above threshold)."""
     target = Path(path).expanduser().resolve()
+
+    if not target.exists():
+        console.print(f"[error]Path not found: {target}[/error]")
+        raise typer.Exit(1)
+
     files = list(walk_audio_files(target, recursive=recursive))
 
     if not files:
@@ -542,7 +537,6 @@ def hires(
         console.print(f"[info]No files above {threshold} Hz found[/info]")
         raise typer.Exit(0)
 
-    from musictl.utils.console import make_file_table
     table = make_file_table(title=f"Hi-Res Files (>{threshold} Hz)")
     for info in sorted(hires_files, key=lambda i: i.sample_rate, reverse=True):
         rel_path = info.path.relative_to(target)

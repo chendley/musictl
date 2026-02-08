@@ -1,4 +1,4 @@
-"""Integration tests for Phase 3 commands (scan library, organize)."""
+"""Integration tests for scan library and organize commands."""
 
 from pathlib import Path
 

@@ -130,15 +130,19 @@ def _count_anomalous_chars(text: str, encoding: str) -> int:
 
     Lower counts indicate better text quality (fewer anomalies).
     """
-    if encoding.startswith("cp1251") or encoding.startswith("koi8"):
+    if encoding.startswith("cp1251") or encoding.startswith("koi8") or encoding == "iso-8859-5":
         # Basic Russian Cyrillic: U+0410 to U+044F (А-я)
         return sum(1 for c in text if not (0x410 <= ord(c) <= 0x44F))
-    elif encoding.startswith("shift_jis") or encoding.startswith("euc-jp"):
+    elif encoding.startswith("shift_jis"):
         # Japanese Unicode blocks: Hiragana, Katakana, CJK
         return sum(1 for c in text if not (0x3040 <= ord(c) <= 0x30FF or 0x4E00 <= ord(c) <= 0x9FFF))
-    elif encoding.startswith("gb") or encoding.startswith("big5"):
+    elif encoding.startswith("gb"):
         # Chinese CJK Unicode block
         return sum(1 for c in text if not (0x4E00 <= ord(c) <= 0x9FFF))
+    elif encoding == "euc-kr":
+        # Korean Hangul Syllables: U+AC00 to U+D7AF, Jamo: U+1100 to U+11FF
+        return sum(1 for c in text if not (0xAC00 <= ord(c) <= 0xD7AF or 0x1100 <= ord(c) <= 0x11FF))
     else:
-        # For unknown encodings, return 0 if different from original, else 1
-        return 0
+        # Latin encodings (cp1252, iso-8859-1): count non-ASCII non-Latin chars
+        # Latin Extended: U+00C0 to U+024F
+        return sum(1 for c in text if ord(c) > 0x7F and not (0x00C0 <= ord(c) <= 0x024F))
