@@ -368,6 +368,136 @@ def encoding(
 
 
 @app.command()
+def missing(
+    path: Path = typer.Argument(..., help="Directory to scan"),
+    recursive: bool = typer.Option(True, "--recursive/--no-recursive", "-r/-R"),
+    export: Path = typer.Option(None, "--export", "-e", help="Export results to file"),
+    export_format: str = typer.Option("csv", "--format", "-f", help="Export format: csv or json"),
+):
+    """Find files with missing or incomplete metadata (artist, album, title, year)."""
+    target = Path(path).expanduser().resolve()
+
+    if not target.exists():
+        console.print(f"[error]Path not found: {target}[/error]")
+        raise typer.Exit(1)
+
+    files = list(walk_audio_files(target, recursive=recursive))
+
+    if not files:
+        console.print("[warning]No audio files found[/warning]")
+        raise typer.Exit(0)
+
+    if export and export_format not in ("csv", "json"):
+        console.print(f"[error]Invalid format: {export_format}. Use 'csv' or 'json'[/error]")
+        raise typer.Exit(1)
+
+    # Required tags to check for
+    required_tags = ["artist", "album", "title", "date"]  # 'date' covers year/TDRC
+    missing_files = []
+
+    try:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Scanning for missing tags...", total=len(files))
+
+            for audio_path in files:
+                progress.advance(task)
+                info = read_audio(audio_path)
+
+                if info.error:
+                    continue
+
+                # Check which required tags are missing
+                missing = []
+                tags_lower = {k.lower(): v for k, v in info.tags.items()}
+
+                # Check artist (TPE1, artist, albumartist)
+                if not any(k in tags_lower for k in ["artist", "albumartist", "tpe1"]):
+                    missing.append("artist")
+
+                # Check album (TALB, album)
+                if not any(k in tags_lower for k in ["album", "talb"]):
+                    missing.append("album")
+
+                # Check title (TIT2, title)
+                if not any(k in tags_lower for k in ["title", "tit2"]):
+                    missing.append("title")
+
+                # Check date/year (TDRC, date, year)
+                if not any(k in tags_lower for k in ["date", "year", "tdrc"]):
+                    missing.append("year")
+
+                if missing:
+                    missing_files.append({
+                        "path": audio_path,
+                        "missing": missing,
+                        "format": info.format
+                    })
+
+    except KeyboardInterrupt:
+        console.print("\n[warning]Operation cancelled by user[/warning]")
+        raise typer.Exit(130)
+
+    if not missing_files:
+        console.print("\n[success]All files have complete metadata![/success]")
+        return
+
+    # Display results
+    console.print()
+    console.print(f"[bold]Files with Missing Tags:[/bold]")
+    console.print()
+
+    for file_info in missing_files:
+        rel_path = file_info["path"].relative_to(target) if target.is_dir() else file_info["path"].name
+        missing_str = ", ".join(file_info["missing"])
+        console.print(f"  [warning]{rel_path}[/warning]")
+        console.print(f"    Missing: [error]{missing_str}[/error]")
+
+    console.print()
+    console.print(f"[info]Found {len(missing_files)} files with incomplete metadata out of {len(files)} total[/info]")
+
+    # Export if requested
+    if export:
+        export_path = Path(export).expanduser().resolve()
+        try:
+            if export_format == "json":
+                data = {
+                    "scan_path": str(target),
+                    "total_scanned": len(files),
+                    "incomplete_count": len(missing_files),
+                    "files": [
+                        {
+                            "path": str(f["path"].relative_to(target)),
+                            "format": f["format"],
+                            "missing_tags": f["missing"]
+                        }
+                        for f in missing_files
+                    ]
+                }
+                with open(export_path, "w") as f:
+                    json.dump(data, f, indent=2)
+            else:  # CSV
+                with open(export_path, "w", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["File Path", "Format", "Missing Tags"])
+                    for file_info in missing_files:
+                        writer.writerow([
+                            str(file_info["path"].relative_to(target)),
+                            file_info["format"],
+                            ", ".join(file_info["missing"])
+                        ])
+
+            console.print(f"[success]Exported to: {export_path}[/success]")
+        except Exception as e:
+            console.print(f"[error]Export failed: {e}[/error]")
+
+
+@app.command()
 def hires(
     path: Path = typer.Argument(..., help="Directory to scan"),
     threshold: int = typer.Option(48000, "--threshold", "-t", help="Sample rate threshold in Hz"),
