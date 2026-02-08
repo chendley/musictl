@@ -1,0 +1,63 @@
+[project]
+name = "musictl"
+version = "0.1.0"
+description = "A CLI toolkit for managing, fixing, and organizing music libraries"
+readme = "README.md"
+license = { text = "GPL-3.0-or-later" }
+authors = [
+    { name = "Casey Hendley" }
+]
+requires-python = ">=3.12"
+keywords = [
+    "music",
+    "audio",
+    "metadata",
+    "tags",
+    "mp3",
+    "flac",
+    "library",
+    "organizer",
+    "duplicates",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "typer>=0.12.0",
+    "rich>=13.0.0",
+    "mutagen>=1.47.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/caseyhendley/musictl"
+Repository = "https://github.com/caseyhendley/musictl"
+Issues = "https://github.com/caseyhendley/musictl/issues"
+
+[project.scripts]
+musictl = "musictl.cli:app"
+
+[build-system]
+requires = ["uv_build>=0.9.26,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
