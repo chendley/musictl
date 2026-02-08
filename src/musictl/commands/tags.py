@@ -408,6 +408,10 @@ def normalize(
 
         changes = []
         for key in list(mfile.tags.keys()):
+            # Skip lyrics - formatting is intentional
+            if key.lower() in ("lyrics", "unsyncedlyrics", "uslt"):
+                continue
+
             values = mfile.tags[key]
             new_values = []
             for val in values:
@@ -435,7 +439,7 @@ def normalize(
                 if val:
                     new_values.append(val)
 
-            if new_values != list(mfile.tags[key]):
+            if apply and new_values != list(mfile.tags[key]):
                 mfile.tags[key] = new_values
 
         if changes:
