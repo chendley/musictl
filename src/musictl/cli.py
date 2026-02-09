@@ -3,7 +3,7 @@
 import typer
 
 from musictl import __version__
-from musictl.commands import tags, scan, organize, duplicates, validate, config, clean
+from musictl.commands import tags, scan, organize, duplicates, validate, config, clean, art
 
 
 def version_callback(value: bool):
@@ -41,6 +41,7 @@ app.add_typer(duplicates.app, name="dupes")
 app.add_typer(validate.app, name="validate")
 app.add_typer(config.app, name="config")
 app.add_typer(clean.app, name="clean")
+app.add_typer(art.app, name="art")
 
 
 if __name__ == "__main__":

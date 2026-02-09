@@ -598,3 +598,213 @@ def tags_from_filename(
             console.print("[info]Run with --apply to save changes[/info]")
 
     console.print()
+
+
+# Mapping from CLI option names to mutagen easy-mode tag keys
+_TAG_KEY_MAP = {
+    "artist": "artist",
+    "album": "album",
+    "title": "title",
+    "genre": "genre",
+    "year": "date",
+    "albumartist": "albumartist",
+    "track": "tracknumber",
+}
+
+
+@app.command("set")
+def set_tags(
+    path: Path = typer.Argument(..., help="Audio file or directory"),
+    artist: str = typer.Option(None, "--artist", help="Set artist"),
+    album: str = typer.Option(None, "--album", help="Set album"),
+    title: str = typer.Option(None, "--title", help="Set title"),
+    genre: str = typer.Option(None, "--genre", help="Set genre"),
+    year: str = typer.Option(None, "--year", help="Set year"),
+    albumartist: str = typer.Option(None, "--albumartist", help="Set album artist"),
+    track: str = typer.Option(None, "--track", help="Set track number"),
+    tag: list[str] = typer.Option([], "--tag", help="Set arbitrary tag (key=value, repeatable)"),
+    overwrite: bool = typer.Option(False, "--overwrite", help="Overwrite existing non-empty tags"),
+    apply: bool = typer.Option(False, "--apply", help="Apply changes (default is dry-run)"),
+    recursive: bool = typer.Option(True, "--recursive/--no-recursive", "-r/-R"),
+):
+    """Set tag values across multiple files.
+
+    By default, only sets tags that are empty or missing.
+    Use --overwrite to replace existing values.
+
+    Examples:
+        musictl tags set ~/Music/Album/ --artist "Pink Floyd" --album "The Wall" --apply
+        musictl tags set ~/Music/ --tag comment="Remastered 2011" --apply
+    """
+    target = Path(path).expanduser().resolve()
+
+    if not target.exists():
+        console.print(f"[error]Path not found: {target}[/error]")
+        raise typer.Exit(1)
+
+    # Build tags dict from named options
+    tags_to_set: dict[str, str] = {}
+    named_opts = {
+        "artist": artist, "album": album, "title": title,
+        "genre": genre, "year": year, "albumartist": albumartist,
+        "track": track,
+    }
+    for opt_name, opt_val in named_opts.items():
+        if opt_val is not None:
+            tags_to_set[_TAG_KEY_MAP[opt_name]] = opt_val
+
+    # Parse --tag key=value options
+    for t in tag:
+        if "=" not in t:
+            console.print(f"[error]Invalid --tag format: {t!r} (expected key=value)[/error]")
+            raise typer.Exit(1)
+        key, _, value = t.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            console.print(f"[error]Empty tag key in: {t!r}[/error]")
+            raise typer.Exit(1)
+        tags_to_set[key] = value
+
+    if not tags_to_set:
+        console.print("[error]No tags specified. Use --artist, --album, etc. or --tag key=value[/error]")
+        raise typer.Exit(1)
+
+    files = list(walk_audio_files(target, recursive=recursive))
+    if not files:
+        console.print("[warning]No audio files found[/warning]")
+        raise typer.Exit(0)
+
+    updated_count = 0
+    skipped_count = 0
+
+    for audio_path in files:
+        try:
+            mfile = mutagen.File(str(audio_path), easy=True)
+        except Exception:
+            continue
+        if mfile is None:
+            continue
+        if mfile.tags is None:
+            mfile.add_tags()
+
+        changes = []
+        for tag_key, new_val in tags_to_set.items():
+            existing = mfile.tags.get(tag_key)
+            existing_str = existing[0] if existing and existing[0] else None
+
+            if existing_str and not overwrite:
+                continue
+
+            if existing_str == new_val:
+                continue
+
+            changes.append((tag_key, existing_str, new_val))
+
+        if not changes:
+            skipped_count += 1
+            continue
+
+        updated_count += 1
+        rel_path = audio_path.relative_to(target) if target.is_dir() else audio_path.name
+        console.print(f"\n[info]File: {rel_path}[/info]")
+        for tag_key, old_val, new_val in changes:
+            if old_val:
+                console.print(f"  [tag_key]{tag_key}[/tag_key]: [error]{old_val}[/error] → [success]{new_val}[/success]")
+            else:
+                console.print(f"  [tag_key]{tag_key}[/tag_key]: [success]{new_val}[/success] (new)")
+
+        if apply:
+            try:
+                for tag_key, _, new_val in changes:
+                    mfile.tags[tag_key] = new_val
+                mfile.save()
+                console.print(f"  [success]✓ Saved[/success]")
+            except Exception as e:
+                console.print(f"  [error]✗ Failed: {e}[/error]")
+                updated_count -= 1
+
+    console.print()
+    if apply:
+        console.print(f"[success]Set tags in {updated_count} files[/success]")
+        if skipped_count > 0:
+            console.print(f"[info]Skipped {skipped_count} files (no changes needed)[/info]")
+    else:
+        console.print(f"[info]Dry run: {updated_count} files would be updated[/info]")
+        if skipped_count > 0:
+            console.print(f"[info]{skipped_count} files already have these tags (use --overwrite to replace)[/info]")
+        if updated_count > 0:
+            console.print("[info]Run with --apply to save changes[/info]")
+
+
+@app.command("clear")
+def clear_tags(
+    path: Path = typer.Argument(..., help="Audio file or directory"),
+    tag: list[str] = typer.Option(..., "--tag", help="Tag to remove (repeatable)"),
+    apply: bool = typer.Option(False, "--apply", help="Apply changes (default is dry-run)"),
+    recursive: bool = typer.Option(True, "--recursive/--no-recursive", "-r/-R"),
+):
+    """Remove specific tags from audio files.
+
+    Examples:
+        musictl tags clear ~/Music/ --tag comment --tag lyrics --apply
+    """
+    target = Path(path).expanduser().resolve()
+
+    if not target.exists():
+        console.print(f"[error]Path not found: {target}[/error]")
+        raise typer.Exit(1)
+
+    if not tag:
+        console.print("[error]No tags specified. Use --tag to specify tags to remove.[/error]")
+        raise typer.Exit(1)
+
+    files = list(walk_audio_files(target, recursive=recursive))
+    if not files:
+        console.print("[warning]No audio files found[/warning]")
+        raise typer.Exit(0)
+
+    cleared_count = 0
+    skipped_count = 0
+
+    for audio_path in files:
+        try:
+            mfile = mutagen.File(str(audio_path), easy=True)
+        except Exception:
+            continue
+        if mfile is None or mfile.tags is None:
+            continue
+
+        removals = []
+        for tag_key in tag:
+            existing = mfile.tags.get(tag_key)
+            if existing:
+                removals.append((tag_key, existing[0] if len(existing) == 1 else "; ".join(existing)))
+
+        if not removals:
+            skipped_count += 1
+            continue
+
+        cleared_count += 1
+        rel_path = audio_path.relative_to(target) if target.is_dir() else audio_path.name
+        console.print(f"\n[info]File: {rel_path}[/info]")
+        for tag_key, old_val in removals:
+            console.print(f"  [tag_key]{tag_key}[/tag_key]: [error]{old_val}[/error] → (removed)")
+
+        if apply:
+            for tag_key, _ in removals:
+                del mfile.tags[tag_key]
+            mfile.save()
+            console.print(f"  [success]✓ Saved[/success]")
+
+    console.print()
+    if apply:
+        console.print(f"[success]Cleared tags from {cleared_count} files[/success]")
+        if skipped_count > 0:
+            console.print(f"[info]{skipped_count} files had none of the specified tags[/info]")
+    else:
+        console.print(f"[info]Dry run: {cleared_count} files would have tags removed[/info]")
+        if skipped_count > 0:
+            console.print(f"[info]{skipped_count} files had none of the specified tags[/info]")
+        if cleared_count > 0:
+            console.print("[info]Run with --apply to save changes[/info]")
