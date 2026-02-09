@@ -4,8 +4,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from mutagen.id3 import ID3, TIT2, TPE1, TALB
-from mutagen.flac import FLAC
+from mutagen.id3 import ID3, TIT2, TPE1, TALB, APIC, PictureType
+from mutagen.flac import FLAC, Picture
 from mutagen.mp3 import MP3
 
 
@@ -208,3 +208,110 @@ def sample_messy_tags(temp_music_dir):
     audio.save()
 
     return mp3_path
+
+
+def create_test_jpeg() -> bytes:
+    """Create minimal valid JPEG image data using ffmpeg."""
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
+        tmp_path = f.name
+    subprocess.run(
+        [
+            "ffmpeg", "-f", "lavfi", "-i", "color=c=red:s=1x1:d=0.01",
+            "-frames:v", "1", "-y", tmp_path,
+        ],
+        capture_output=True,
+        check=True,
+    )
+    data = Path(tmp_path).read_bytes()
+    Path(tmp_path).unlink()
+    return data
+
+
+def create_test_png() -> bytes:
+    """Create minimal valid PNG image data using ffmpeg."""
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+        tmp_path = f.name
+    subprocess.run(
+        [
+            "ffmpeg", "-f", "lavfi", "-i", "color=c=blue:s=2x2:d=0.01",
+            "-frames:v", "1", "-y", tmp_path,
+        ],
+        capture_output=True,
+        check=True,
+    )
+    data = Path(tmp_path).read_bytes()
+    Path(tmp_path).unlink()
+    return data
+
+
+@pytest.fixture
+def sample_jpeg():
+    """Minimal valid JPEG image data."""
+    return create_test_jpeg()
+
+
+@pytest.fixture
+def sample_png():
+    """Minimal valid PNG image data."""
+    return create_test_png()
+
+
+@pytest.fixture
+def sample_cover_jpg(tmp_path, sample_jpeg):
+    """Write a JPEG to a file and return its path."""
+    cover_path = tmp_path / "cover.jpg"
+    cover_path.write_bytes(sample_jpeg)
+    return cover_path
+
+
+@pytest.fixture
+def sample_cover_png(tmp_path, sample_png):
+    """Write a PNG to a file and return its path."""
+    cover_path = tmp_path / "cover.png"
+    cover_path.write_bytes(sample_png)
+    return cover_path
+
+
+@pytest.fixture
+def sample_mp3_with_art(temp_music_dir, sample_jpeg):
+    """Create an MP3 with embedded album art."""
+    mp3_path = temp_music_dir / "with_art.mp3"
+    create_test_mp3(mp3_path)
+
+    audio = MP3(str(mp3_path))
+    audio["TIT2"] = TIT2(encoding=3, text="Art Song")
+    audio.save()
+
+    id3 = ID3(str(mp3_path))
+    id3.add(APIC(
+        encoding=3,
+        mime="image/jpeg",
+        type=PictureType.COVER_FRONT,
+        desc="Cover",
+        data=sample_jpeg,
+    ))
+    id3.save(str(mp3_path))
+
+    return mp3_path
+
+
+@pytest.fixture
+def sample_flac_with_art(temp_music_dir, sample_png):
+    """Create a FLAC with embedded album art."""
+    flac_path = temp_music_dir / "with_art.flac"
+    create_test_flac(flac_path)
+
+    audio = FLAC(str(flac_path))
+    audio["TITLE"] = "Art Song"
+    pic = Picture()
+    pic.data = sample_png
+    pic.mime = "image/png"
+    pic.type = PictureType.COVER_FRONT
+    pic.width = 2
+    pic.height = 2
+    audio.add_picture(pic)
+    audio.save()
+
+    return flac_path
