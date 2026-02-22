@@ -4,7 +4,9 @@ import csv
 import json
 from collections import Counter, defaultdict
 from pathlib import Path
+from typing import Any
 
+import mutagen
 import typer
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCompleteColumn
 from rich.table import Table
@@ -592,3 +594,143 @@ def hires(
             console.print(f"[success]Exported to: {export_path}[/success]")
         except Exception as e:
             console.print(f"[error]Export failed: {e}[/error]")
+
+
+def _get_easy_tag(mfile: Any, key: str) -> str | None:
+    """Get a single tag value from a mutagen easy file, or None."""
+    if mfile is None or mfile.tags is None:
+        return None
+    vals = mfile.tags.get(key)
+    if vals and vals[0]:
+        return vals[0]
+    return None
+
+
+@app.command()
+def consistency(
+    path: Path = typer.Argument(..., help="Directory to scan"),
+    summary: bool = typer.Option(False, "--summary", "-s", help="Only show counts"),
+    recursive: bool = typer.Option(True, "--recursive/--no-recursive", "-r/-R"),
+):
+    """Check album consistency (mismatched tags, track numbering issues).
+
+    Groups files by directory and checks for inconsistencies within each album.
+
+    Examples:
+        musictl scan consistency ~/Music
+        musictl scan consistency ~/Music --summary
+    """
+    target = Path(path).expanduser().resolve()
+
+    if not target.exists():
+        console.print(f"[error]Path not found: {target}[/error]")
+        raise typer.Exit(1)
+
+    files = list(walk_audio_files(target, recursive=recursive))
+    if not files:
+        console.print("[warning]No audio files found[/warning]")
+        raise typer.Exit(0)
+
+    # Group files by directory
+    dirs: dict[Path, list[Path]] = defaultdict(list)
+    for f in files:
+        dirs[f.parent].append(f)
+
+    albums_checked = 0
+    albums_with_issues = 0
+
+    for album_dir in sorted(dirs):
+        audio_files = dirs[album_dir]
+        if len(audio_files) < 2:
+            albums_checked += 1
+            continue
+
+        # Read tags for all files in this directory
+        file_tags: list[tuple[Path, dict[str, str | None]]] = []
+        for audio_path in audio_files:
+            try:
+                mfile = mutagen.File(str(audio_path), easy=True)
+            except Exception:
+                continue
+
+            tags = {
+                "title": _get_easy_tag(mfile, "title"),
+                "artist": _get_easy_tag(mfile, "artist"),
+                "album": _get_easy_tag(mfile, "album"),
+                "albumartist": _get_easy_tag(mfile, "albumartist"),
+                "tracknumber": _get_easy_tag(mfile, "tracknumber"),
+            }
+            file_tags.append((audio_path, tags))
+
+        if not file_tags:
+            continue
+
+        albums_checked += 1
+        issues: list[str] = []
+
+        # 1. Mismatched album name
+        album_names = {t["album"] for _, t in file_tags if t["album"]}
+        if len(album_names) > 1:
+            issues.append(f"Mismatched album: {', '.join(repr(a) for a in sorted(album_names))}")
+
+        # 2. Mismatched album artist
+        has_albumartist = any(t["albumartist"] for _, t in file_tags)
+        if has_albumartist:
+            aa_set = {t["albumartist"] for _, t in file_tags if t["albumartist"]}
+            if len(aa_set) > 1:
+                issues.append(f"Mismatched album artist: {', '.join(repr(a) for a in sorted(aa_set))}")
+
+        # 3-5. Track number checks
+        track_numbers: list[tuple[Path, int]] = []
+        missing_track = 0
+        for fpath, t in file_tags:
+            raw = t["tracknumber"]
+            if not raw:
+                missing_track += 1
+                continue
+            # Handle "3/12" format
+            num_str = raw.split("/")[0].strip()
+            try:
+                track_numbers.append((fpath, int(num_str)))
+            except ValueError:
+                missing_track += 1
+
+        if missing_track > 0:
+            issues.append(f"Missing track number: {missing_track} files")
+
+        if track_numbers:
+            nums = [n for _, n in track_numbers]
+            # Duplicate track numbers
+            num_counts = Counter(nums)
+            dupes = {n: c for n, c in num_counts.items() if c > 1}
+            if dupes:
+                dupe_strs = [f"#{n} ({c}x)" for n, c in sorted(dupes.items())]
+                issues.append(f"Duplicate tracks: {', '.join(dupe_strs)}")
+
+            # Gaps in numbering
+            if len(nums) >= 2:
+                expected = set(range(min(nums), max(nums) + 1))
+                gaps = sorted(expected - set(nums))
+                if gaps and len(gaps) <= 5:
+                    issues.append(f"Track gaps: missing {', '.join(str(g) for g in gaps)}")
+                elif gaps:
+                    issues.append(f"Track gaps: {len(gaps)} missing numbers")
+
+        # 6. Missing essential tags
+        missing_essential = 0
+        for _, t in file_tags:
+            if not t["title"] or not t["artist"] or not t["album"]:
+                missing_essential += 1
+        if missing_essential > 0:
+            issues.append(f"Missing essential tags: {missing_essential} files")
+
+        if issues:
+            albums_with_issues += 1
+            if not summary:
+                rel_dir = album_dir.relative_to(target) if target.is_dir() else album_dir.name
+                console.print(f"\n[warning]{rel_dir}/[/warning] ({len(file_tags)} files)")
+                for issue in issues:
+                    console.print(f"  [error]•[/error] {issue}")
+
+    console.print()
+    console.print(f"[info]{albums_checked} albums checked, {albums_with_issues} with issues[/info]")

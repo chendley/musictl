@@ -6,12 +6,15 @@ import typer
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
+from collections import defaultdict
+
 from musictl.core.artwork import (
     read_artwork,
     embed_artwork,
     extract_artwork_data,
     remove_artwork,
     detect_image_format,
+    find_cover_image,
 )
 from musictl.core.scanner import walk_audio_files
 from musictl.utils.console import console, format_size
@@ -307,3 +310,91 @@ def remove(
             console.print(f"[info]{skipped_count} files have no artwork[/info]")
         if removed_count > 0:
             console.print("[info]Run with --apply to remove artwork[/info]")
+
+
+@app.command("from-folder")
+def from_folder(
+    path: Path = typer.Argument(..., help="Audio file or directory"),
+    overwrite: bool = typer.Option(False, "--overwrite", help="Replace existing artwork"),
+    apply: bool = typer.Option(False, "--apply", help="Apply changes (default is dry-run)"),
+    recursive: bool = typer.Option(True, "--recursive/--no-recursive", "-r/-R"),
+):
+    """Embed album art from image files found in album folders.
+
+    Searches each album directory for cover images (cover.jpg, front.jpg,
+    folder.jpg, etc.), including subdirectories and parent directories.
+
+    Examples:
+        musictl art from-folder ~/Music --apply
+        musictl art from-folder ~/Music --overwrite --apply
+    """
+    target = Path(path).expanduser().resolve()
+
+    if not target.exists():
+        console.print(f"[error]Path not found: {target}[/error]")
+        raise typer.Exit(1)
+
+    files = list(walk_audio_files(target, recursive=recursive))
+    if not files:
+        console.print("[warning]No audio files found[/warning]")
+        raise typer.Exit(0)
+
+    # Group files by directory
+    dirs: dict[Path, list[Path]] = defaultdict(list)
+    for f in files:
+        dirs[f.parent].append(f)
+
+    embedded_count = 0
+    skipped_dirs = 0
+    no_image_dirs = 0
+
+    for album_dir in sorted(dirs):
+        audio_files = dirs[album_dir]
+
+        # Determine which files need art
+        if overwrite:
+            targets = audio_files
+        else:
+            targets = [f for f in audio_files if not read_artwork(f)]
+
+        if not targets:
+            skipped_dirs += 1
+            continue
+
+        # Search for cover image
+        cover = find_cover_image(album_dir)
+        if not cover:
+            no_image_dirs += 1
+            continue
+
+        rel_dir = album_dir.relative_to(target) if target.is_dir() else album_dir.name
+        image_data = cover.read_bytes()
+        mime_type, _ = detect_image_format(image_data)
+
+        if mime_type == "application/octet-stream":
+            continue
+
+        console.print(f"\n[info]{rel_dir}/[/info] ← {cover.name} ({format_size(len(image_data))})")
+
+        if apply:
+            count = 0
+            for audio_path in targets:
+                if embed_artwork(audio_path, image_data, mime_type, overwrite=overwrite):
+                    count += 1
+            console.print(f"  [success]✓ Embedded in {count} files[/success]")
+            embedded_count += count
+        else:
+            console.print(f"  [info]Would embed in {len(targets)} files[/info]")
+            embedded_count += len(targets)
+
+    console.print()
+    if apply:
+        console.print(f"[success]Embedded artwork in {embedded_count} files[/success]")
+    else:
+        console.print(f"[info]Dry run: {embedded_count} files would get artwork[/info]")
+        if embedded_count > 0:
+            console.print("[info]Run with --apply to save changes[/info]")
+    if skipped_dirs > 0:
+        console.print(f"[info]{skipped_dirs} directories already have artwork[/info]")
+    if no_image_dirs > 0:
+        console.print(f"[warning]{no_image_dirs} directories have no cover image[/warning]")

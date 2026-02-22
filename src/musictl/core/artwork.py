@@ -300,3 +300,71 @@ def remove_artwork(path: Path) -> bool:
         return True
 
     return False
+
+
+# Priority-ordered cover image filenames (case-insensitive matching)
+_COVER_NAMES = [
+    "cover", "front", "folder", "album", "artwork",
+]
+
+_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
+
+
+def _find_cover_in_dir(directory: Path) -> Path | None:
+    """Search a single directory for a cover image, by priority."""
+    if not directory.is_dir():
+        return None
+
+    # Index all image files in this directory (non-recursive)
+    images: list[Path] = []
+    for entry in directory.iterdir():
+        if entry.is_file() and entry.suffix.lower() in _IMAGE_EXTENSIONS:
+            images.append(entry)
+
+    if not images:
+        return None
+
+    # Check priority names
+    names_lower = {img.stem.lower(): img for img in images}
+    for name in _COVER_NAMES:
+        if name in names_lower:
+            return names_lower[name]
+
+    # Fallback: use the image only if there's exactly one
+    if len(images) == 1:
+        return images[0]
+
+    return None
+
+
+def find_cover_image(directory: Path) -> Path | None:
+    """Find a cover image for an album directory.
+
+    Search order:
+    1. The directory itself
+    2. Subdirectories (Artwork/, Scans/, etc.)
+    3. Parent directory (for disc subfolders)
+    """
+    # 1. Check the directory itself
+    result = _find_cover_in_dir(directory)
+    if result:
+        return result
+
+    # 2. Check subdirectories
+    try:
+        for entry in sorted(directory.iterdir()):
+            if entry.is_dir():
+                result = _find_cover_in_dir(entry)
+                if result:
+                    return result
+    except PermissionError:
+        pass
+
+    # 3. Check parent directory
+    parent = directory.parent
+    if parent != directory:
+        result = _find_cover_in_dir(parent)
+        if result:
+            return result
+
+    return None
