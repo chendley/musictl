@@ -13,6 +13,7 @@ from rich.table import Table
 
 from musictl.core.audio import read_audio
 from musictl.core.encoding import detect_non_utf8_tags, guess_encoding
+from musictl.core.hasher import file_hash, quick_hash
 from musictl.core.scanner import walk_audio_files
 from musictl.utils.console import console, format_size, make_file_table
 
@@ -734,3 +735,271 @@ def consistency(
 
     console.print()
     console.print(f"[info]{albums_checked} albums checked, {albums_with_issues} with issues[/info]")
+
+
+@app.command()
+def dupes(
+    path: Path = typer.Argument(..., help="Directory to scan"),
+    fuzzy: bool = typer.Option(False, "--fuzzy", help="Use metadata matching instead of exact hashing"),
+    summary: bool = typer.Option(False, "--summary", "-s", help="Only show totals"),
+    recursive: bool = typer.Option(True, "--recursive/--no-recursive", "-r/-R"),
+    export: Path = typer.Option(None, "--export", "-e", help="Export results to file"),
+    export_format: str = typer.Option("csv", "--format", "-f", help="Export format: csv or json"),
+):
+    """Scan for duplicate audio files (exact or fuzzy matching).
+
+    Reports duplicate groups without deleting anything.
+    Use 'dupes find --apply' if you want to delete duplicates.
+
+    Examples:
+        musictl scan dupes ~/Music
+        musictl scan dupes ~/Music --fuzzy --summary
+        musictl scan dupes ~/Music --export dupes.csv
+    """
+    target = Path(path).expanduser().resolve()
+
+    if not target.exists():
+        console.print(f"[error]Path not found: {target}[/error]")
+        raise typer.Exit(1)
+
+    if export and export_format not in ("csv", "json"):
+        console.print(f"[error]Invalid format: {export_format}. Use 'csv' or 'json'[/error]")
+        raise typer.Exit(1)
+
+    files = list(walk_audio_files(target, recursive=recursive))
+    if not files:
+        console.print("[warning]No audio files found[/warning]")
+        raise typer.Exit(0)
+
+    if fuzzy:
+        duplicates = _scan_fuzzy_dupes(target, files)
+    else:
+        duplicates = _scan_exact_dupes(target, files)
+
+    if not duplicates:
+        console.print("\n[success]No duplicates found![/success]")
+        return
+
+    # Calculate stats
+    total_groups = len(duplicates)
+    total_duplicate_files = sum(len(group["files"]) - 1 for group in duplicates)
+    total_wasted = sum(group["wasted_bytes"] for group in duplicates)
+
+    # Display results
+    if not summary:
+        for group in duplicates:
+            console.print(f"\n[bold cyan]Group {group['group']}:[/bold cyan] ", end="")
+            if fuzzy:
+                console.print(f"{group['key']}")
+            else:
+                console.print(
+                    f"{len(group['files'])} files, "
+                    f"{format_size(group['file_size'])} each "
+                    f"({format_size(group['wasted_bytes'])} wasted)"
+                )
+            for entry in group["files"]:
+                marker = "[dim](keep)[/dim]" if entry["status"] == "keep" else "[warning](duplicate)[/warning]"
+                detail = f" ({entry['quality']})" if "quality" in entry else ""
+                console.print(f"  {entry['path']}{detail} {marker}")
+
+    console.print()
+    console.print(
+        f"[info]{total_groups} duplicate groups, "
+        f"{total_duplicate_files} duplicate files, "
+        f"{format_size(total_wasted)} wasted[/info]"
+    )
+
+    # Export
+    if export:
+        _export_dupes(export, export_format, target, duplicates, len(files),
+                      total_groups, total_duplicate_files, total_wasted)
+
+
+def _scan_exact_dupes(target: Path, files: list[Path]) -> list[dict]:
+    """Find exact duplicates using 2-phase hashing. Returns structured groups."""
+    # Phase 1: Quick hash
+    quick_groups: dict[str, list[Path]] = defaultdict(list)
+    try:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Quick hashing...", total=len(files))
+            for audio_path in files:
+                progress.advance(task)
+                try:
+                    qhash = quick_hash(audio_path)
+                    quick_groups[qhash].append(audio_path)
+                except Exception:
+                    pass
+    except KeyboardInterrupt:
+        console.print("\n[warning]Operation cancelled by user[/warning]")
+        raise typer.Exit(130)
+
+    potential = [group for group in quick_groups.values() if len(group) > 1]
+    if not potential:
+        return []
+
+    # Phase 2: Full hash
+    full_groups: dict[str, list[Path]] = defaultdict(list)
+    try:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            console=console,
+        ) as progress:
+            total_to_verify = sum(len(g) for g in potential)
+            task = progress.add_task("Verifying...", total=total_to_verify)
+            for group in potential:
+                for audio_path in group:
+                    progress.advance(task)
+                    try:
+                        fhash = file_hash(audio_path)
+                        full_groups[fhash].append(audio_path)
+                    except Exception:
+                        pass
+    except KeyboardInterrupt:
+        console.print("\n[warning]Operation cancelled by user[/warning]")
+        raise typer.Exit(130)
+
+    # Build result structure
+    results = []
+    group_num = 0
+    for hash_val, file_group in sorted(full_groups.items()):
+        if len(file_group) < 2:
+            continue
+        group_num += 1
+        file_size = file_group[0].stat().st_size
+        sorted_files = sorted(file_group)
+        results.append({
+            "group": group_num,
+            "file_size": file_size,
+            "wasted_bytes": file_size * (len(file_group) - 1),
+            "files": [
+                {
+                    "path": str(f.relative_to(target) if target.is_dir() else f.name),
+                    "size": file_size,
+                    "status": "keep" if i == 0 else "duplicate",
+                }
+                for i, f in enumerate(sorted_files)
+            ],
+        })
+    return results
+
+
+def _scan_fuzzy_dupes(target: Path, files: list[Path]) -> list[dict]:
+    """Find fuzzy duplicates using metadata. Returns structured groups."""
+    file_metadata = []
+    try:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Reading metadata...", total=len(files))
+            for audio_path in files:
+                progress.advance(task)
+                info = read_audio(audio_path)
+                if not info.error:
+                    file_metadata.append((audio_path, info))
+    except KeyboardInterrupt:
+        console.print("\n[warning]Operation cancelled by user[/warning]")
+        raise typer.Exit(130)
+
+    # Group by (artist, title, duration)
+    # Map both Vorbis-style and ID3 frame keys
+    _ARTIST_KEYS = {"artist", "tpe1"}
+    _TITLE_KEYS = {"title", "tit2"}
+    metadata_groups: dict[tuple, list[tuple]] = defaultdict(list)
+    for audio_path, info in file_metadata:
+        artist = ""
+        title = ""
+        for key, value in info.tags.items():
+            key_lower = key.lower()
+            if key_lower in _ARTIST_KEYS:
+                artist = value.lower().strip()
+            elif key_lower in _TITLE_KEYS:
+                title = value.lower().strip()
+        if artist and title:
+            fuzzy_key = (artist, title, round(info.duration))
+            metadata_groups[fuzzy_key].append((audio_path, info))
+
+    # Build result structure
+    results = []
+    group_num = 0
+    for (artist, title, duration), file_group in sorted(metadata_groups.items()):
+        if len(file_group) < 2:
+            continue
+        group_num += 1
+        # Sort by sample rate descending (highest quality first)
+        sorted_group = sorted(file_group, key=lambda x: x[1].sample_rate, reverse=True)
+        total_size = sum(f.stat().st_size for f, _ in sorted_group)
+        keep_size = sorted_group[0][0].stat().st_size
+        results.append({
+            "group": group_num,
+            "key": f"{artist} - {title} (~{duration}s)",
+            "file_size": keep_size,
+            "wasted_bytes": total_size - keep_size,
+            "files": [
+                {
+                    "path": str(f.relative_to(target) if target.is_dir() else f.name),
+                    "size": f.stat().st_size,
+                    "status": "keep" if i == 0 else "duplicate",
+                    "quality": f"{info.format} {info.sample_rate_str}"
+                               + (f" {info.bit_depth}-bit" if info.bit_depth else ""),
+                }
+                for i, (f, info) in enumerate(sorted_group)
+            ],
+        })
+    return results
+
+
+def _export_dupes(
+    export: Path,
+    export_format: str,
+    target: Path,
+    duplicates: list[dict],
+    total_files: int,
+    total_groups: int,
+    total_duplicate_files: int,
+    total_wasted: int,
+):
+    """Export duplicate scan results to CSV or JSON."""
+    export_path = Path(export).expanduser().resolve()
+    try:
+        if export_format == "json":
+            data = {
+                "scan_path": str(target),
+                "total_files": total_files,
+                "summary": {
+                    "duplicate_groups": total_groups,
+                    "duplicate_files": total_duplicate_files,
+                    "wasted_bytes": total_wasted,
+                },
+                "groups": duplicates,
+            }
+            with open(export_path, "w") as f:
+                json.dump(data, f, indent=2)
+        else:  # CSV
+            with open(export_path, "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(["Group", "File", "Size", "Status"])
+                for group in duplicates:
+                    for entry in group["files"]:
+                        writer.writerow([
+                            group["group"],
+                            entry["path"],
+                            entry["size"],
+                            entry["status"],
+                        ])
+
+        console.print(f"\n[success]Exported to: {export_path}[/success]")
+    except Exception as e:
+        console.print(f"\n[error]Export failed: {e}[/error]")
