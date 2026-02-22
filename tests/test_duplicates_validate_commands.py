@@ -44,7 +44,7 @@ class TestDuplicatesFind:
         assert "Dry run" in result.stdout
 
     def test_dupes_find_with_apply(self, temp_music_dir):
-        """Test duplicate deletion with --apply."""
+        """Test duplicate deletion with --apply (confirmed)."""
         # Create identical files
         original = temp_music_dir / "original.mp3"
         dup1 = temp_music_dir / "dup1.mp3"
@@ -52,7 +52,8 @@ class TestDuplicatesFind:
         create_test_mp3(original)
         shutil.copy(original, dup1)
 
-        result = runner.invoke(app, ["dupes", "find", str(temp_music_dir), "--apply"])
+        # Confirm the deletion prompt
+        result = runner.invoke(app, ["dupes", "find", str(temp_music_dir), "--apply"], input="y\n")
 
         assert result.exit_code == 0
         assert "Successfully deleted" in result.stdout or "Deleted" in result.stdout
@@ -60,6 +61,68 @@ class TestDuplicatesFind:
         # Verify one file was deleted
         files = list(temp_music_dir.glob("*.mp3"))
         assert len(files) == 1
+
+    def test_dupes_find_apply_cancelled(self, temp_music_dir):
+        """Test that declining the confirmation prompt cancels deletion."""
+        original = temp_music_dir / "original.mp3"
+        dup1 = temp_music_dir / "dup1.mp3"
+
+        create_test_mp3(original)
+        shutil.copy(original, dup1)
+
+        result = runner.invoke(app, ["dupes", "find", str(temp_music_dir), "--apply"], input="n\n")
+
+        assert result.exit_code == 0
+        assert "Cancelled" in result.stdout or "move-to" in result.stdout.lower()
+
+        # Both files should still exist
+        files = list(temp_music_dir.glob("*.mp3"))
+        assert len(files) == 2
+
+    def test_dupes_find_move_to(self, temp_music_dir, tmp_path):
+        """Test moving duplicates to quarantine directory."""
+        original = temp_music_dir / "original.mp3"
+        dup1 = temp_music_dir / "dup1.mp3"
+
+        create_test_mp3(original)
+        shutil.copy(original, dup1)
+
+        quarantine = tmp_path / "quarantine"
+        result = runner.invoke(app, [
+            "dupes", "find", str(temp_music_dir),
+            "--apply", "--move-to", str(quarantine),
+        ])
+
+        assert result.exit_code == 0
+        assert "Successfully moved" in result.stdout
+
+        # Original should still exist, duplicate should be moved
+        remaining = list(temp_music_dir.glob("*.mp3"))
+        assert len(remaining) == 1
+        moved = list(quarantine.rglob("*.mp3"))
+        assert len(moved) == 1
+
+    def test_dupes_find_move_to_preserves_structure(self, temp_music_dir, tmp_path):
+        """Test that --move-to preserves relative directory structure."""
+        subdir = temp_music_dir / "Album"
+        subdir.mkdir()
+        original = subdir / "track.mp3"
+        dup1 = subdir / "track_copy.mp3"
+
+        create_test_mp3(original)
+        shutil.copy(original, dup1)
+
+        quarantine = tmp_path / "quarantine"
+        result = runner.invoke(app, [
+            "dupes", "find", str(temp_music_dir),
+            "--apply", "--move-to", str(quarantine),
+        ])
+
+        assert result.exit_code == 0
+        # Should preserve the Album/ subdirectory
+        moved = list(quarantine.rglob("*.mp3"))
+        assert len(moved) == 1
+        assert "Album" in str(moved[0])
 
     def test_dupes_find_multiple_groups(self, temp_music_dir):
         """Test detection of multiple duplicate groups."""

@@ -1,5 +1,6 @@
 """Duplicate file detection commands."""
 
+import shutil
 from collections import defaultdict
 from pathlib import Path
 
@@ -20,16 +21,17 @@ def find(
     path: Path = typer.Argument(..., help="Directory to scan for duplicates"),
     fuzzy: bool = typer.Option(False, "--fuzzy", help="Use fuzzy matching (metadata-based)"),
     apply: bool = typer.Option(False, "--apply", help="Delete duplicates (keeps one copy)"),
+    move_to: Path = typer.Option(None, "--move-to", help="Move duplicates to this directory instead of deleting"),
     recursive: bool = typer.Option(True, "--recursive/--no-recursive", "-r/-R"),
 ):
     """Find duplicate audio files (byte-level or fuzzy matching)."""
     if fuzzy:
         _find_fuzzy_duplicates(path, apply, recursive)
     else:
-        _find_exact_duplicates(path, apply, recursive)
+        _find_exact_duplicates(path, apply, move_to, recursive)
 
 
-def _find_exact_duplicates(path: Path, apply: bool, recursive: bool):
+def _find_exact_duplicates(path: Path, apply: bool, move_to: Path | None, recursive: bool):
     """Find exact duplicate files using file hashing."""
     target = Path(path).expanduser().resolve()
 
@@ -147,11 +149,34 @@ def _find_exact_duplicates(path: Path, apply: bool, recursive: bool):
     console.print()
 
     if not apply:
-        console.print("[info]Dry run: No files deleted[/info]")
+        console.print("[info]Dry run: No files modified[/info]")
         console.print("[info]Run with --apply to delete duplicates (keeps first file in each group)[/info]")
+        console.print("[info]Run with --apply --move-to <dir> to move duplicates instead of deleting[/info]")
         return
 
-    # Delete duplicates (keep first file in each group)
+    # If --apply without --move-to, offer the safer option
+    if not move_to:
+        console.print(
+            "[warning]You are about to permanently delete "
+            f"{total_duplicates} files ({format_size(total_wasted_space)}).[/warning]"
+        )
+        console.print(
+            "[info]Tip: Use --move-to <dir> to move duplicates to a quarantine "
+            "folder instead, so you can review before permanently deleting.[/info]"
+        )
+        confirm = typer.confirm("Permanently delete these files?", default=False)
+        if not confirm:
+            console.print("[info]Cancelled. Consider using --move-to instead.[/info]")
+            raise typer.Exit(0)
+
+    if move_to:
+        _move_duplicates(duplicates, target, move_to)
+    else:
+        _delete_duplicates(duplicates, target)
+
+
+def _delete_duplicates(duplicates: dict, target: Path):
+    """Delete duplicate files, keeping the first in each group."""
     deleted_count = 0
     error_count = 0
 
@@ -159,7 +184,6 @@ def _find_exact_duplicates(path: Path, apply: bool, recursive: bool):
     console.print()
 
     for file_group in duplicates.values():
-        # Keep the first file, delete the rest
         for file_path in sorted(file_group)[1:]:
             try:
                 file_path.unlink()
@@ -175,6 +199,49 @@ def _find_exact_duplicates(path: Path, apply: bool, recursive: bool):
         console.print(f"[warning]Deleted {deleted_count} files, {error_count} errors[/warning]")
     else:
         console.print(f"[success]Successfully deleted {deleted_count} duplicate files[/success]")
+
+
+def _move_duplicates(duplicates: dict, target: Path, move_to: Path):
+    """Move duplicate files to a quarantine directory, preserving relative paths."""
+    dest = Path(move_to).expanduser().resolve()
+    dest.mkdir(parents=True, exist_ok=True)
+
+    moved_count = 0
+    error_count = 0
+
+    console.print(f"[info]Moving duplicates to: {dest}[/info]")
+    console.print()
+
+    for file_group in duplicates.values():
+        for file_path in sorted(file_group)[1:]:
+            try:
+                # Preserve relative directory structure
+                rel_path = file_path.relative_to(target) if target.is_dir() else Path(file_path.name)
+                dest_path = dest / rel_path
+                dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+                # Handle name collision in destination
+                if dest_path.exists():
+                    stem = dest_path.stem
+                    suffix = dest_path.suffix
+                    counter = 1
+                    while dest_path.exists():
+                        dest_path = dest_path.parent / f"{stem}_{counter}{suffix}"
+                        counter += 1
+
+                shutil.move(str(file_path), str(dest_path))
+                moved_count += 1
+                console.print(f"  [success]✓[/success] Moved {rel_path}")
+            except Exception as e:
+                error_count += 1
+                console.print(f"  [error]✗ Error moving {file_path.name}: {e}[/error]")
+
+    console.print()
+    if error_count > 0:
+        console.print(f"[warning]Moved {moved_count} files, {error_count} errors[/warning]")
+    else:
+        console.print(f"[success]Successfully moved {moved_count} duplicate files to {dest}[/success]")
+    console.print(f"[info]Review the files in {dest} and delete when satisfied.[/info]")
 
 
 def _find_fuzzy_duplicates(path: Path, apply: bool, recursive: bool):
